@@ -36,6 +36,10 @@ class JalaliConverterTest {
     @Test fun formatsPersianDigitsAndMonthName() {
         assertEquals("۱۸ آبان ۱۴۰۵", PersianFormat.date(JalaliDate(1405, 8, 18)))
         assertEquals("سال ۱۴۰۵", PersianDigits.convert("سال 1405"))
+        assertEquals(LocalDate.of(2026, 11, 9), PersianFormat.parseDate("۱۴۰۵/۰۸/۱۸"))
+        assertEquals(null, PersianFormat.parseDate("۱۴۰۴/۱۲/۳۰"))
+        assertEquals(570, PersianFormat.parseTime("۰۹:۳۰"))
+        assertEquals(null, PersianFormat.parseTime("۲۴:۰۰"))
     }
 
     @Test fun supportedYearsHaveConsistentLengths() {
