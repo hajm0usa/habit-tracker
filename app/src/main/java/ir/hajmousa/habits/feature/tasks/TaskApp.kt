@@ -59,6 +59,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,14 +87,23 @@ import ir.hajmousa.habits.core.date.PersianFormat
 import ir.hajmousa.habits.data.db.TagEntity
 import ir.hajmousa.habits.data.db.TaskEntity
 import ir.hajmousa.habits.data.db.TaskWithTags
+import ir.hajmousa.habits.feature.habits.HabitProgressItem
+import ir.hajmousa.habits.feature.habits.HabitManagerScreen
+import ir.hajmousa.habits.feature.habits.HabitProgressCard
+import ir.hajmousa.habits.feature.habits.HabitEditorDialog
 import ir.hajmousa.habits.data.repo.toRecord
+import ir.hajmousa.habits.data.repo.toModel
 import ir.hajmousa.habits.domain.model.TaskPriority
 import ir.hajmousa.habits.domain.model.TaskRecord
 import ir.hajmousa.habits.domain.model.TaskSection
 import ir.hajmousa.habits.domain.task.TaskGrouping
 import ir.hajmousa.habits.domain.task.TaskTagFilter
+import ir.hajmousa.habits.domain.habit.ScheduleResolver
+import ir.hajmousa.habits.domain.habit.StreakCalculator
 import java.time.LocalDate
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 
 private enum class Page { TODAY, TASKS, HABITS, STATS, TAGS }
 
@@ -147,6 +157,9 @@ fun TaskApp(container: AppContainer) {
     val context = LocalContext.current
     val tasks by container.tasks.observeAll().collectAsState(initial = emptyList())
     val tags by container.tags.observeAll().collectAsState(initial = emptyList())
+    val habitRows by container.habits.observeAll().collectAsState(initial = emptyList())
+    val scheduleRows by container.habits.observeVersions().collectAsState(initial = emptyList())
+    val logRows by container.habits.observeLogs().collectAsState(initial = emptyList())
     val today = container.dayClock.today()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -157,12 +170,31 @@ fun TaskApp(container: AppContainer) {
     var editingTag by remember { mutableStateOf<TagEntity?>(null) }
     var showTagEditor by remember { mutableStateOf(false) }
     var showDone by remember { mutableStateOf(false) }
+    var editingHabit by remember { mutableStateOf<HabitProgressItem?>(null) }
+    var showHabitEditor by remember { mutableStateOf(false) }
+    var pendingHabitDeletes by remember { mutableStateOf(emptySet<Long>()) }
 
     val visible = tasks.filter { row -> TaskTagFilter.matches(row.tags.map { it.id }.toSet(), selectedTagIds) }
     val visibleGroups = remember(visible, today) {
         TaskGrouping.group(visible.map { it.toRecord() }, today.toEpochDay())
     }
     val visibleById = remember(visible) { visible.associateBy { it.task.id } }
+    val habitItems = remember(habitRows, scheduleRows, logRows, selectedTagIds, today) {
+        val versionsByHabit = scheduleRows.groupBy { it.habitId }
+        val logsByHabit = logRows.groupBy { it.habitId }.mapValues { (_, rows) -> rows.map { it.toModel() }.associateBy { it.epochDay } }
+        habitRows.filter { row -> selectedTagIds.all { id -> row.tags.any { it.id == id } } }.mapNotNull { row ->
+            val versions = versionsByHabit[row.habit.id].orEmpty().map { it.toModel() }
+            val currentVersion = ScheduleResolver.versionOn(versions, today.toEpochDay()) ?: return@mapNotNull null
+            val logs = logsByHabit[row.habit.id].orEmpty()
+            HabitProgressItem(
+                row = row,
+                version = currentVersion,
+                log = logs[today.toEpochDay()],
+                scheduledToday = ScheduleResolver.isScheduled(today.toEpochDay(), versions),
+                currentStreak = StreakCalculator.current(row.habit.createdEpochDay, today.toEpochDay(), versions, logs)
+            )
+        }
+    }
     fun deleteTask(id: Long) {
         scope.launch {
             try {
@@ -177,6 +209,45 @@ fun TaskApp(container: AppContainer) {
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 snackbar.showSnackbar(context.getString(R.string.operation_failed))
+            }
+        }
+    }
+    // shortcut: the five-second undo window is process-scoped; persist it only if deletion must survive process death.
+    fun deleteHabit(item: HabitProgressItem) {
+        val id = item.row.habit.id
+        if (id in pendingHabitDeletes) return
+        pendingHabitDeletes += id
+        scope.launch {
+            var timer: Job? = null
+            var deletionFailed = false
+            try {
+                val historyDays = container.habits.logCount(id)
+                val deleteTimer = launch {
+                    delay(5_000)
+                    try {
+                        container.habits.delete(id)
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        deletionFailed = true
+                    } finally {
+                        snackbar.currentSnackbarData?.dismiss()
+                    }
+                }
+                timer = deleteTimer
+                val result = snackbar.showSnackbar(
+                    context.getString(R.string.habit_delete_pending, PersianDigits.convert(historyDays.toString())),
+                    context.getString(R.string.undo),
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Indefinite
+                )
+                if (result == SnackbarResult.ActionPerformed) deleteTimer.cancel() else deleteTimer.join()
+                if (deletionFailed) snackbar.showSnackbar(context.getString(R.string.operation_failed))
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                snackbar.showSnackbar(context.getString(R.string.operation_failed))
+            } finally {
+                timer?.cancel()
+                pendingHabitDeletes -= id
             }
         }
     }
@@ -205,6 +276,9 @@ fun TaskApp(container: AppContainer) {
                 onClick = { editingTask = null; showTaskEditor = true },
                 content = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_task_action)) }
             )
+            if (page == Page.HABITS) FloatingActionButton(onClick = { editingHabit = null; showHabitEditor = true }) {
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_habit))
+            }
             if (page == Page.TAGS) FloatingActionButton(onClick = {
                 editingTag = null
                 showTagEditor = true
@@ -242,7 +316,26 @@ fun TaskApp(container: AppContainer) {
                 } },
                 onDelete = ::deleteTask,
                 showDone = false,
-                onToggleDone = {}
+                onToggleDone = {},
+        habits = habitItems.filter { it.scheduledToday && !it.row.habit.archived },
+                onHabitValue = { id, value -> scope.launch {
+                    try { container.habits.setValue(id, today.toEpochDay(), value) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onHabitAdjust = { id, direction -> scope.launch {
+                    try { container.habits.increment(id, today.toEpochDay(), direction) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onHabitSkip = { id, skipped -> scope.launch {
+                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } }
             )
             Page.TASKS -> TaskList(
                 modifier = Modifier.padding(padding),
@@ -264,6 +357,46 @@ fun TaskApp(container: AppContainer) {
                 showDone = showDone,
                 onToggleDone = { showDone = !showDone }
             )
+            Page.HABITS -> HabitManagerScreen(
+                items = habitItems,
+                tags = tags,
+                selectedTagIds = selectedTagIds,
+                onToggleTag = { id -> selectedTagIds = selectedTagIds.toggle(id) },
+                onClearFilter = { selectedTagIds = emptySet() },
+                onValue = { id, value -> scope.launch {
+                    try { container.habits.setValue(id, today.toEpochDay(), value) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onAdjust = { id, direction -> scope.launch {
+                    try { container.habits.increment(id, today.toEpochDay(), direction) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onSkip = { id, skipped -> scope.launch {
+                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onEdit = { editingHabit = it; showHabitEditor = true },
+                onArchive = { id, archived -> scope.launch {
+                    try { container.habits.setArchived(id, archived) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onDelete = ::deleteHabit,
+                onReorder = { ids -> scope.launch {
+                    try { container.habits.reorder(ids) } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                modifier = Modifier.padding(padding)
+            )
             Page.TAGS -> TagList(
                 modifier = Modifier.padding(padding),
                 tags = tags,
@@ -275,7 +408,7 @@ fun TaskApp(container: AppContainer) {
                     }
                 } }
             )
-            Page.HABITS, Page.STATS -> Surface(Modifier.fillMaxSize().padding(padding)) {
+            Page.STATS -> Surface(Modifier.fillMaxSize().padding(padding)) {
                 Text(stringResource(R.string.empty_section), modifier = Modifier.padding(24.dp))
             }
         }
@@ -310,6 +443,23 @@ fun TaskApp(container: AppContainer) {
             }
         } }
     )
+    if (showHabitEditor) HabitEditorDialog(
+        item = editingHabit,
+        tags = tags,
+        today = today,
+        onDismiss = { showHabitEditor = false },
+        onSave = { habit, version, tagIds ->
+            scope.launch {
+                try {
+                    container.habits.save(habit, version, tagIds)
+                    showHabitEditor = false
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                }
+            }
+        }
+    )
 }
 
 @Composable
@@ -326,9 +476,13 @@ private fun TaskList(
     onDone: (Long, Boolean) -> Unit,
     onDelete: (Long) -> Unit,
     showDone: Boolean,
-    onToggleDone: () -> Unit
+    onToggleDone: () -> Unit,
+    habits: List<HabitProgressItem> = emptyList(),
+    onHabitValue: (Long, Int) -> Unit = { _, _ -> },
+    onHabitAdjust: (Long, Int) -> Unit = { _, _ -> },
+    onHabitSkip: (Long, Boolean) -> Unit = { _, _ -> }
 ) {
-    val noResults = sections.none { groups[it].orEmpty().isNotEmpty() }
+    val noResults = sections.none { groups[it].orEmpty().isNotEmpty() } && habits.isEmpty()
     LazyColumn(modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
         if (tags.isNotEmpty()) item {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -385,6 +539,14 @@ private fun TaskList(
                             }
                         }
                 }
+            }
+        }
+        if (habits.isNotEmpty()) {
+            item(key = "today-habits-header") {
+                Text(stringResource(R.string.habits), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
+            }
+            items(habits, key = { "habit-${it.row.habit.id}" }) { habit ->
+                HabitProgressCard(habit, onHabitValue, onHabitAdjust, onHabitSkip)
             }
         }
     }
@@ -464,14 +626,14 @@ private fun TaskEditorDialog(task: TaskWithTags?, tags: List<TagEntity>, onDismi
                 OutlinedTextField(description, { description = it }, label = { Text(stringResource(R.string.task_description)) })
                 OutlinedTextField(
                     dateText,
-                    { dateText = it },
+                    { dateText = PersianDigits.convert(PersianDigits.toAscii(it)) },
                     label = { Text(stringResource(R.string.due_date)) },
                     isError = dateText.isNotBlank() && dueDate == null,
                     supportingText = { if (dateText.isNotBlank() && dueDate == null) Text(stringResource(R.string.due_date_invalid)) }
                 )
                 OutlinedTextField(
                     timeText,
-                    { timeText = it },
+                    { timeText = PersianDigits.convert(PersianDigits.toAscii(it)) },
                     label = { Text(stringResource(R.string.due_time)) },
                     isError = timeText.isNotBlank() && (dueMinute == null || dueDate == null),
                     supportingText = {
