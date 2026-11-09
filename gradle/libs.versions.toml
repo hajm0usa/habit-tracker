@@ -1,0 +1,27 @@
+[versions]
+# AGP, Kotlin, KSP, Compose BOM, and Room follow the official Android Now in Android catalog.
+# KSP 2.3.13 is currently marked regressed by its maintainers; use the catalog's 2.3.4.
+agp = "9.3.2"
+kotlin = "2.3.0"
+ksp = "2.3.12"
+compose-bom = "2025.09.01"
+room = "2.8.3"
+junit = "4.13.2"
+activity = "1.9.3"
+
+[libraries]
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+junit = { module = "junit:junit", version.ref = "junit" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
