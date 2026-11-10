@@ -661,7 +661,7 @@ private fun TaskCard(
                 val details = buildList {
                     task.dueEpochDay?.let { add(PersianFormat.date(JalaliConverter.toJalali(LocalDate.ofEpochDay(it)))) }
                     task.dueMinuteOfDay?.let { minute -> add(PersianDigits.convert("%02d:%02d".format(java.util.Locale.ROOT, minute / 60, minute % 60))) }
-                    add(context.getString(task.priority.resourceId()))
+                    add(context.getString(runCatching { TaskPriority.valueOf(task.priority).resourceId() }.getOrDefault(R.string.priority_medium)))
                     row.tags.forEach { add(it.name) }
                 }
                 Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
