@@ -71,6 +71,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,9 +95,15 @@ import ir.hajmousa.habits.feature.habits.HabitManagerScreen
 import ir.hajmousa.habits.feature.habits.HabitProgressCard
 import ir.hajmousa.habits.feature.habits.HabitEditorDialog
 import ir.hajmousa.habits.feature.settings.SettingsScreen
+import ir.hajmousa.habits.feature.stats.StatsHabit
+import ir.hajmousa.habits.feature.stats.StatsScreen
+import ir.hajmousa.habits.data.backup.BackupModel
+import ir.hajmousa.habits.data.backup.BackupSummary
+import ir.hajmousa.habits.feature.widget.WidgetUpdater
 import ir.hajmousa.habits.data.repo.toRecord
 import ir.hajmousa.habits.data.repo.toModel
 import ir.hajmousa.habits.domain.model.TaskPriority
+import ir.hajmousa.habits.domain.model.HabitType
 import ir.hajmousa.habits.domain.model.TaskRecord
 import ir.hajmousa.habits.domain.model.TaskSection
 import ir.hajmousa.habits.domain.task.TaskGrouping
@@ -103,9 +111,14 @@ import ir.hajmousa.habits.domain.task.TaskTagFilter
 import ir.hajmousa.habits.domain.habit.ScheduleResolver
 import ir.hajmousa.habits.domain.habit.StreakCalculator
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class Page { TODAY, TASKS, HABITS, STATS, TAGS, SETTINGS }
 
@@ -173,6 +186,8 @@ fun TaskApp(
     val reminderRows by container.habits.observeReminders().collectAsState(initial = emptyList())
     val weeklyBackupEnabled by container.settings.weeklyBackupEnabled.collectAsState(initial = true)
     val weeklyBackupMinute by container.settings.weeklyBackupMinute.collectAsState(initial = 17 * 60)
+    val dayStartHour by container.settings.dayStartHour.collectAsState(initial = 0)
+    container.dayClock.setDayStartHour(dayStartHour)
     val today = container.dayClock.today()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -186,6 +201,45 @@ fun TaskApp(
     var editingHabit by remember { mutableStateOf<HabitProgressItem?>(null) }
     var showHabitEditor by remember { mutableStateOf(false) }
     var pendingHabitDeletes by remember { mutableStateOf(emptySet<Long>()) }
+    var pendingRestore by remember { mutableStateOf<Pair<BackupModel, BackupSummary>?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val json = container.backup.export()
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { it.write(json) }
+                        ?: error("Unable to open backup destination")
+                }
+                snackbar.showSnackbar(context.getString(R.string.backup_exported))
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                snackbar.showSnackbar(context.getString(R.string.operation_failed))
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val content = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer, 0, minOf(buffer.size, 20_000_001 - output.size()))
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            require(output.size() <= 20_000_000) { "Backup is too large" }
+                        }
+                        output.toString(Charsets.UTF_8.name())
+                    } ?: error("Unable to read backup")
+                }
+                pendingRestore = withContext(Dispatchers.Default) { container.backup.inspect(content) }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                snackbar.showSnackbar(context.getString(R.string.invalid_backup))
+            }
+        }
+    }
 
     val visible = tasks.filter { row -> TaskTagFilter.matches(row.tags.map { it.id }.toSet(), selectedTagIds) }
     val visibleGroups = remember(visible, today) {
@@ -208,6 +262,12 @@ fun TaskApp(
                 currentStreak = StreakCalculator.current(row.habit.createdEpochDay, today.toEpochDay(), versions, logs),
                 reminderMinutes = remindersByHabit[row.habit.id].orEmpty()
             )
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(tasks, habitRows, scheduleRows, logRows) {
+        try { WidgetUpdater.update(context) } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            Log.w("KarHa", "Widget refresh failed", error)
         }
     }
     fun deleteTask(id: Long) {
@@ -445,6 +505,7 @@ fun TaskApp(
             Page.SETTINGS -> SettingsScreen(
                 weeklyBackupEnabled = weeklyBackupEnabled,
                 weeklyBackupMinute = weeklyBackupMinute,
+                dayStartHour = dayStartHour,
                 notificationPermissionGranted = notificationPermissionGranted,
                 onWeeklyBackupEnabled = { enabled -> scope.launch {
                     try {
@@ -473,14 +534,45 @@ fun TaskApp(
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
+                onSaveDayStartHour = { hour -> scope.launch {
+                    try {
+                        container.settings.setDayStartHour(hour)
+                        container.dayClock.setDayStartHour(hour)
+                        container.reminders.scheduleAll()
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
                 onRequestNotifications = onRequestNotifications,
                 onOpenNotificationSettings = onOpenNotificationSettings,
                 onOpenBatterySettings = onOpenBatterySettings,
+                onExportBackup = { exportLauncher.launch("kar-ha-backup.json") },
+                onImportBackup = { importLauncher.launch(arrayOf("application/json", "text/*")) },
                 modifier = Modifier.padding(padding)
             )
-            Page.STATS -> Surface(Modifier.fillMaxSize().padding(padding)) {
-                Text(stringResource(R.string.empty_section), modifier = Modifier.padding(24.dp))
-            }
+            Page.STATS -> StatsScreen(
+                habits = habitRows.mapNotNull { row ->
+                    val versions = scheduleRows.filter { it.habitId == row.habit.id }.map { it.toModel() }
+                    if (versions.isEmpty()) return@mapNotNull null
+                    val logs = logRows.filter { it.habitId == row.habit.id }.map { it.toModel() }.associateBy { it.epochDay }
+                    StatsHabit(row.habit.id, row.habit.name, runCatching { HabitType.valueOf(row.habit.type) }.getOrDefault(HabitType.BOOLEAN), row.habit.createdEpochDay, versions, logs, row.habit.archived)
+                },
+                today = today,
+                onSetValue = { id, day, value -> scope.launch {
+                    try { container.habits.setValue(id, day, value); container.reminders.scheduleAll() } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onSkip = { id, day, skipped -> scope.launch {
+                    try { container.habits.setSkipped(id, day, skipped); container.reminders.scheduleAll() } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                modifier = Modifier.padding(padding)
+            )
         }
     }
 
@@ -552,6 +644,40 @@ fun TaskApp(
         },
         dismissButton = { TextButton(onClick = onDismissPermissionPrompt) { Text(stringResource(R.string.cancel)) } }
     )
+    pendingRestore?.let { (backup, summary) ->
+        val exportedDate = JalaliConverter.toJalali(Instant.ofEpochMilli(summary.exportedAtEpochMillis).atZone(ZoneId.systemDefault()).toLocalDate())
+        val dateText = PersianDigits.convert("${exportedDate.year}/${exportedDate.month}/${exportedDate.day}")
+        AlertDialog(
+            onDismissRequest = { pendingRestore = null },
+            title = { Text(stringResource(R.string.import_backup)) },
+            text = { Column {
+                Text(stringResource(R.string.backup_summary, PersianDigits.convert(summary.habitCount.toString()), PersianDigits.convert(summary.taskCount.toString()), PersianDigits.convert(summary.tagCount.toString()), dateText))
+                Text(stringResource(R.string.confirm_restore))
+            } },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    try {
+                        container.backup.restore(backup)
+                        container.dayClock.setDayStartHour(backup.settings.dayStartHour)
+                        pendingRestore = null
+                        try { container.reminders.scheduleAll() } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            Log.e("KarHa", "Reminder rescheduling after restore failed", error)
+                        }
+                        try { WidgetUpdater.update(context) } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            Log.e("KarHa", "Widget refresh after restore failed", error)
+                        }
+                        snackbar.showSnackbar(context.getString(R.string.backup_restored))
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                }
+            }) { Text(stringResource(R.string.restore)) } },
+            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text(stringResource(R.string.cancel)) } }
+        )
+    }
 }
 
 @Composable

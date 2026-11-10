@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.LayoutDirection
 import ir.hajmousa.habits.feature.tasks.TaskApp
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(notificationPermissionGranted) {
                 if (notificationPermissionGranted) {
                     try {
+                        container.dayClock.setDayStartHour(container.settings.dayStartHour.first())
                         container.reminders.scheduleAll(showMissed = true)
                     } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error

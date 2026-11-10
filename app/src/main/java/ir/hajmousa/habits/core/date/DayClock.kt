@@ -7,14 +7,22 @@ import java.time.ZoneId
 
 class DayClock(
     private val clock: Clock,
-    val dayStartHour: Int = 0,
+    dayStartHour: Int = 0,
     private val zoneProvider: () -> ZoneId = { clock.zone }
 ) {
+    @Volatile var dayStartHour: Int = dayStartHour
+        private set
+
     init {
         require(dayStartHour in 0..6)
     }
 
     fun zoneId(): ZoneId = zoneProvider()
+
+    fun setDayStartHour(hour: Int) {
+        require(hour in 0..6)
+        dayStartHour = hour
+    }
 
     fun today(): LocalDate = LocalDate.ofInstant(
         Instant.ofEpochMilli(clock.millis() - dayStartHour * 60L * 60 * 1000),

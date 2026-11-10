@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import ir.hajmousa.habits.core.date.DayClock
 import ir.hajmousa.habits.data.db.AppDatabase
+import ir.hajmousa.habits.data.backup.BackupService
 import ir.hajmousa.habits.data.repo.HabitRepository
 import ir.hajmousa.habits.data.repo.TagRepository
 import ir.hajmousa.habits.data.repo.TaskRepository
@@ -23,4 +24,5 @@ class AppContainer(context: Context) {
     val tags = TagRepository(database)
     val settings = SettingsStore(context)
     val reminders = ReminderScheduler(context.applicationContext, database, dayClock, settings)
+    val backup = BackupService(database, settings)
 }

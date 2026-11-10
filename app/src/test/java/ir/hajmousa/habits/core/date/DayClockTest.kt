@@ -13,4 +13,12 @@ class DayClockTest {
         assertEquals(java.time.LocalDate.of(2024, 3, 19), DayClock(clock("2024-03-20T00:29:00Z"), 4).today())
         assertEquals(java.time.LocalDate.of(2024, 3, 20), DayClock(clock("2024-03-20T00:31:00Z"), 4).today())
     }
+
+    @Test fun updatesEffectiveBoundaryAtRuntime() {
+        val clock = Clock.fixed(Instant.parse("2024-03-20T01:00:00Z"), ZoneId.of("Asia/Tehran"))
+        val dayClock = DayClock(clock)
+        assertEquals(java.time.LocalDate.of(2024, 3, 20), dayClock.today())
+        dayClock.setDayStartHour(5)
+        assertEquals(java.time.LocalDate.of(2024, 3, 19), dayClock.today())
+    }
 }

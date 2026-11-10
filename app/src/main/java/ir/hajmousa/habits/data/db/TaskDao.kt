@@ -20,11 +20,23 @@ interface TaskDao {
     @Query("SELECT * FROM tasks")
     suspend fun allTasks(): List<TaskEntity>
 
+    @Query("SELECT * FROM task_tag_cross_ref")
+    suspend fun allTagRefs(): List<TaskTagCrossRef>
+
     @Query("SELECT tagId FROM task_tag_cross_ref WHERE taskId = :taskId")
     suspend fun tagIds(taskId: Long): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(task: TaskEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(tasks: List<TaskEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTagRefs(refs: List<TaskTagCrossRef>)
+
+    @Query("DELETE FROM tasks")
+    suspend fun deleteAll()
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIfAbsent(task: TaskEntity): Long

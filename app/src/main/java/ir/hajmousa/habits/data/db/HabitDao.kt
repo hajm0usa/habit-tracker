@@ -20,6 +20,15 @@ interface HabitDao {
     @Query("SELECT * FROM habits")
     suspend fun allHabits(): List<HabitEntity>
 
+    @Query("SELECT * FROM habit_logs")
+    suspend fun allLogs(): List<HabitLogEntity>
+
+    @Query("SELECT * FROM habit_schedule_versions")
+    suspend fun allVersions(): List<HabitScheduleVersionEntity>
+
+    @Query("SELECT * FROM habit_tag_cross_ref")
+    suspend fun allTagRefs(): List<HabitTagCrossRef>
+
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM habits")
     suspend fun maxSortOrder(): Int
 
@@ -50,14 +59,32 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertReminders(reminders: List<HabitReminderEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreReminders(reminders: List<HabitReminderEntity>)
+
     @Insert
     suspend fun insert(habit: HabitEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(habits: List<HabitEntity>)
 
     @Update
     suspend fun update(habit: HabitEntity)
 
     @Insert
     suspend fun insertVersion(version: HabitScheduleVersionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertVersions(versions: List<HabitScheduleVersionEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLogs(logs: List<HabitLogEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTagRefs(refs: List<HabitTagCrossRef>)
+
+    @Query("DELETE FROM habits")
+    suspend fun deleteAll()
 
     @Query("DELETE FROM habit_schedule_versions WHERE habitId = :habitId AND effectiveFromEpochDay = :epochDay")
     suspend fun deleteVersionOn(habitId: Long, epochDay: Long)

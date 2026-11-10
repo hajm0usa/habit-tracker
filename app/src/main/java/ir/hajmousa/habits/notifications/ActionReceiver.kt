@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -18,6 +19,7 @@ class ActionReceiver : BroadcastReceiver() {
             val app = context.applicationContext as HabitsApp
             val notifications = NotificationHelper(context)
             try {
+                app.container.dayClock.setDayStartHour(app.container.settings.dayStartHour.first())
                 when (intent.action) {
                     ReminderContract.ACTION_DONE -> when (alarm.kind) {
                         ReminderKind.TASK -> app.container.tasks.setDone(alarm.id, true)
@@ -28,7 +30,10 @@ class ActionReceiver : BroadcastReceiver() {
                     else -> return@launch
                 }
                 notifications.cancel(alarm.notificationId)
-                if (intent.action == ReminderContract.ACTION_DONE) app.container.reminders.scheduleAll()
+                if (intent.action == ReminderContract.ACTION_DONE) {
+                    app.container.reminders.scheduleAll()
+                    ir.hajmousa.habits.feature.widget.WidgetUpdater.update(context)
+                }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 Log.e(TAG, "Reminder action failed", error)

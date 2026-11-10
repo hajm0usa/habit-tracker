@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -16,8 +17,11 @@ class BootReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                (context.applicationContext as HabitsApp).container.reminders.scheduleAll(showMissed = missedCheck)
+                val container = (context.applicationContext as HabitsApp).container
+                container.dayClock.setDayStartHour(container.settings.dayStartHour.first())
+                container.reminders.scheduleAll(showMissed = missedCheck)
             } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 Log.e(TAG, "Unable to reschedule reminders", error)
             } finally {
                 pendingResult.finish()

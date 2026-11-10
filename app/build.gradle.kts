@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -53,6 +54,9 @@ dependencies {
     implementation(libs.room.ktx)
     implementation(libs.work.runtime.ktx)
     implementation(libs.datastore.preferences)
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance)
+    implementation(libs.serialization.json)
     ksp(libs.room.compiler)
     testImplementation(libs.junit)
     debugImplementation(libs.compose.ui.tooling)

@@ -27,17 +27,23 @@ import ir.hajmousa.habits.core.date.PersianFormat
 fun SettingsScreen(
     weeklyBackupEnabled: Boolean,
     weeklyBackupMinute: Int,
+    dayStartHour: Int,
     notificationPermissionGranted: Boolean,
     onWeeklyBackupEnabled: (Boolean) -> Unit,
     onSaveBackupMinute: (Int) -> Unit,
+    onSaveDayStartHour: (Int) -> Unit,
     onRequestNotifications: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var timeText by remember(weeklyBackupMinute) {
         mutableStateOf(PersianDigits.convert("%02d:%02d".format(java.util.Locale.ROOT, weeklyBackupMinute / 60, weeklyBackupMinute % 60)))
     }
+    var dayStartText by remember(dayStartHour) { mutableStateOf(PersianDigits.convert(dayStartHour.toString())) }
+    val parsedDayStart = PersianDigits.toAscii(dayStartText).toIntOrNull()?.takeIf { it in 0..6 }
     val minute = PersianFormat.parseTime(timeText)
     Column(modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -55,6 +61,8 @@ fun SettingsScreen(
         Button(onClick = { minute?.let(onSaveBackupMinute) }, enabled = weeklyBackupEnabled && minute != null) {
             Text(stringResource(R.string.save_settings))
         }
+        OutlinedTextField(dayStartText, { dayStartText = PersianDigits.convert(PersianDigits.toAscii(it)) }, label = { Text(stringResource(R.string.day_start_hour)) }, isError = parsedDayStart == null, singleLine = true)
+        Button(onClick = { parsedDayStart?.let(onSaveDayStartHour) }, enabled = parsedDayStart != null) { Text(stringResource(R.string.save_settings)) }
         if (!notificationPermissionGranted) {
             Text(stringResource(R.string.notification_permission_message))
             TextButton(onClick = onRequestNotifications) { Text(stringResource(R.string.enable_notifications)) }
@@ -62,5 +70,7 @@ fun SettingsScreen(
         }
         Text(stringResource(R.string.battery_guide))
         TextButton(onClick = onOpenBatterySettings) { Text(stringResource(R.string.battery_settings)) }
+        TextButton(onClick = onExportBackup) { Text(stringResource(R.string.export_backup)) }
+        TextButton(onClick = onImportBackup) { Text(stringResource(R.string.import_backup)) }
     }
 }
