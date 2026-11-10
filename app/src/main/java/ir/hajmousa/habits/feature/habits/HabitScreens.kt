@@ -54,7 +54,8 @@ data class HabitProgressItem(
     val version: HabitSchedule,
     val log: HabitLogRecord?,
     val scheduledToday: Boolean,
-    val currentStreak: Int
+    val currentStreak: Int,
+    val reminderMinutes: List<Int> = emptyList()
 )
 
 @Composable

@@ -17,6 +17,9 @@ interface HabitDao {
     @Query("SELECT * FROM habits WHERE id = :id")
     suspend fun find(id: Long): HabitEntity?
 
+    @Query("SELECT * FROM habits")
+    suspend fun allHabits(): List<HabitEntity>
+
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM habits")
     suspend fun maxSortOrder(): Int
 
@@ -31,6 +34,21 @@ interface HabitDao {
 
     @Query("SELECT * FROM habit_logs WHERE habitId = :habitId AND epochDay = :epochDay LIMIT 1")
     suspend fun findLog(habitId: Long, epochDay: Long): HabitLogEntity?
+
+    @Query("SELECT * FROM habit_reminders")
+    suspend fun allReminders(): List<HabitReminderEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM habit_reminders WHERE habitId = :habitId AND minuteOfDay = :minuteOfDay)")
+    suspend fun hasReminder(habitId: Long, minuteOfDay: Int): Boolean
+
+    @Query("SELECT * FROM habit_reminders")
+    fun observeReminders(): Flow<List<HabitReminderEntity>>
+
+    @Query("DELETE FROM habit_reminders WHERE habitId = :habitId")
+    suspend fun deleteReminders(habitId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertReminders(reminders: List<HabitReminderEntity>)
 
     @Insert
     suspend fun insert(habit: HabitEntity): Long

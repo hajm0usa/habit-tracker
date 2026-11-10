@@ -1,5 +1,6 @@
 package ir.hajmousa.habits.feature.tasks
 
+import android.util.Log
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -91,6 +92,7 @@ import ir.hajmousa.habits.feature.habits.HabitProgressItem
 import ir.hajmousa.habits.feature.habits.HabitManagerScreen
 import ir.hajmousa.habits.feature.habits.HabitProgressCard
 import ir.hajmousa.habits.feature.habits.HabitEditorDialog
+import ir.hajmousa.habits.feature.settings.SettingsScreen
 import ir.hajmousa.habits.data.repo.toRecord
 import ir.hajmousa.habits.data.repo.toModel
 import ir.hajmousa.habits.domain.model.TaskPriority
@@ -105,7 +107,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 
-private enum class Page { TODAY, TASKS, HABITS, STATS, TAGS }
+private enum class Page { TODAY, TASKS, HABITS, STATS, TAGS, SETTINGS }
 
 private data class TagIcon(val key: String, val image: ImageVector, val label: Int)
 
@@ -153,13 +155,24 @@ private val tagColors = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskApp(container: AppContainer) {
+fun TaskApp(
+    container: AppContainer,
+    notificationPermissionGranted: Boolean,
+    notificationPermissionDenied: Boolean,
+    onRequestNotifications: () -> Unit,
+    onDismissPermissionPrompt: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit
+) {
     val context = LocalContext.current
     val tasks by container.tasks.observeAll().collectAsState(initial = emptyList())
     val tags by container.tags.observeAll().collectAsState(initial = emptyList())
     val habitRows by container.habits.observeAll().collectAsState(initial = emptyList())
     val scheduleRows by container.habits.observeVersions().collectAsState(initial = emptyList())
     val logRows by container.habits.observeLogs().collectAsState(initial = emptyList())
+    val reminderRows by container.habits.observeReminders().collectAsState(initial = emptyList())
+    val weeklyBackupEnabled by container.settings.weeklyBackupEnabled.collectAsState(initial = true)
+    val weeklyBackupMinute by container.settings.weeklyBackupMinute.collectAsState(initial = 17 * 60)
     val today = container.dayClock.today()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -179,9 +192,10 @@ fun TaskApp(container: AppContainer) {
         TaskGrouping.group(visible.map { it.toRecord() }, today.toEpochDay())
     }
     val visibleById = remember(visible) { visible.associateBy { it.task.id } }
-    val habitItems = remember(habitRows, scheduleRows, logRows, selectedTagIds, today) {
+    val habitItems = remember(habitRows, scheduleRows, logRows, reminderRows, selectedTagIds, today) {
         val versionsByHabit = scheduleRows.groupBy { it.habitId }
         val logsByHabit = logRows.groupBy { it.habitId }.mapValues { (_, rows) -> rows.map { it.toModel() }.associateBy { it.epochDay } }
+        val remindersByHabit = reminderRows.groupBy { it.habitId }.mapValues { (_, rows) -> rows.map { it.minuteOfDay }.sorted() }
         habitRows.filter { row -> selectedTagIds.all { id -> row.tags.any { it.id == id } } }.mapNotNull { row ->
             val versions = versionsByHabit[row.habit.id].orEmpty().map { it.toModel() }
             val currentVersion = ScheduleResolver.versionOn(versions, today.toEpochDay()) ?: return@mapNotNull null
@@ -191,7 +205,8 @@ fun TaskApp(container: AppContainer) {
                 version = currentVersion,
                 log = logs[today.toEpochDay()],
                 scheduledToday = ScheduleResolver.isScheduled(today.toEpochDay(), versions),
-                currentStreak = StreakCalculator.current(row.habit.createdEpochDay, today.toEpochDay(), versions, logs)
+                currentStreak = StreakCalculator.current(row.habit.createdEpochDay, today.toEpochDay(), versions, logs),
+                reminderMinutes = remindersByHabit[row.habit.id].orEmpty()
             )
         }
     }
@@ -199,13 +214,26 @@ fun TaskApp(container: AppContainer) {
         scope.launch {
             try {
                 val deleted = container.tasks.delete(id) ?: return@launch
+                try {
+                    container.reminders.cancelTask(id, deleted.task.dueMinuteOfDay)
+                    container.reminders.scheduleAll()
+                } catch (syncError: Exception) {
+                    if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                    Log.e("KarHa", "Reminder rescheduling failed", syncError)
+                }
                 if (snackbar.showSnackbar(
                         context.getString(R.string.task_deleted),
                         context.getString(R.string.undo),
                         withDismissAction = true,
                         duration = SnackbarDuration.Long
-                    ) == androidx.compose.material3.SnackbarResult.ActionPerformed
-                ) container.tasks.restore(deleted)
+                ) == androidx.compose.material3.SnackbarResult.ActionPerformed
+                ) {
+                    container.tasks.restore(deleted)
+                    try { container.reminders.scheduleAll() } catch (syncError: Exception) {
+                        if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                        Log.e("KarHa", "Reminder rescheduling failed after undo", syncError)
+                    }
+                }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 snackbar.showSnackbar(context.getString(R.string.operation_failed))
@@ -225,7 +253,9 @@ fun TaskApp(container: AppContainer) {
                 val deleteTimer = launch {
                     delay(5_000)
                     try {
+                        container.reminders.cancelHabit(id, item.reminderMinutes)
                         container.habits.delete(id)
+                        container.reminders.scheduleAll()
                     } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         deletionFailed = true
@@ -265,8 +295,12 @@ fun TaskApp(container: AppContainer) {
                     }
                 },
                 actions = {
-                    if (page != Page.TAGS) TextButton(onClick = { page = Page.TAGS }) { Text(stringResource(R.string.tags)) }
-                    else TextButton(onClick = { page = Page.TASKS }) { Text(stringResource(R.string.tasks)) }
+                    if (page == Page.TAGS || page == Page.SETTINGS) {
+                        TextButton(onClick = { page = Page.TASKS }) { Text(stringResource(R.string.tasks)) }
+                    } else {
+                        TextButton(onClick = { page = Page.TAGS }) { Text(stringResource(R.string.tags)) }
+                        TextButton(onClick = { page = Page.SETTINGS }) { Text(stringResource(R.string.settings)) }
+                    }
                 }
             )
         },
@@ -285,7 +319,7 @@ fun TaskApp(container: AppContainer) {
             }) { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_tag_action)) }
         },
         bottomBar = {
-            if (page != Page.TAGS) NavigationBar {
+            if (page != Page.TAGS && page != Page.SETTINGS) NavigationBar {
                 listOf(Page.TODAY, Page.TASKS, Page.HABITS, Page.STATS).forEach { item ->
                     NavigationBarItem(
                         selected = page == item,
@@ -309,7 +343,7 @@ fun TaskApp(container: AppContainer) {
                 onClearFilter = { selectedTagIds = emptySet() },
                 onEdit = { editingTask = it; showTaskEditor = true },
                 onDone = { id, done -> scope.launch {
-                    try { container.tasks.setDone(id, done) } catch (error: Exception) {
+                    try { container.tasks.setDone(id, done); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
@@ -319,19 +353,19 @@ fun TaskApp(container: AppContainer) {
                 onToggleDone = {},
         habits = habitItems.filter { it.scheduledToday && !it.row.habit.archived },
                 onHabitValue = { id, value -> scope.launch {
-                    try { container.habits.setValue(id, today.toEpochDay(), value) } catch (error: Exception) {
+                    try { container.habits.setValue(id, today.toEpochDay(), value); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
                 onHabitAdjust = { id, direction -> scope.launch {
-                    try { container.habits.increment(id, today.toEpochDay(), direction) } catch (error: Exception) {
+                    try { container.habits.increment(id, today.toEpochDay(), direction); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
                 onHabitSkip = { id, skipped -> scope.launch {
-                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped) } catch (error: Exception) {
+                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
@@ -348,7 +382,7 @@ fun TaskApp(container: AppContainer) {
                 onClearFilter = { selectedTagIds = emptySet() },
                 onEdit = { editingTask = it; showTaskEditor = true },
                 onDone = { id, done -> scope.launch {
-                    try { container.tasks.setDone(id, done) } catch (error: Exception) {
+                    try { container.tasks.setDone(id, done); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
@@ -364,26 +398,26 @@ fun TaskApp(container: AppContainer) {
                 onToggleTag = { id -> selectedTagIds = selectedTagIds.toggle(id) },
                 onClearFilter = { selectedTagIds = emptySet() },
                 onValue = { id, value -> scope.launch {
-                    try { container.habits.setValue(id, today.toEpochDay(), value) } catch (error: Exception) {
+                    try { container.habits.setValue(id, today.toEpochDay(), value); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
                 onAdjust = { id, direction -> scope.launch {
-                    try { container.habits.increment(id, today.toEpochDay(), direction) } catch (error: Exception) {
+                    try { container.habits.increment(id, today.toEpochDay(), direction); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
                 onSkip = { id, skipped -> scope.launch {
-                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped) } catch (error: Exception) {
+                    try { container.habits.setSkipped(id, today.toEpochDay(), skipped); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
                 } },
                 onEdit = { editingHabit = it; showHabitEditor = true },
                 onArchive = { id, archived -> scope.launch {
-                    try { container.habits.setArchived(id, archived) } catch (error: Exception) {
+                    try { container.habits.setArchived(id, archived); container.reminders.scheduleAll() } catch (error: Exception) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         snackbar.showSnackbar(context.getString(R.string.operation_failed))
                     }
@@ -408,6 +442,42 @@ fun TaskApp(container: AppContainer) {
                     }
                 } }
             )
+            Page.SETTINGS -> SettingsScreen(
+                weeklyBackupEnabled = weeklyBackupEnabled,
+                weeklyBackupMinute = weeklyBackupMinute,
+                notificationPermissionGranted = notificationPermissionGranted,
+                onWeeklyBackupEnabled = { enabled -> scope.launch {
+                    try {
+                        container.settings.setWeeklyBackupEnabled(enabled)
+                        container.reminders.scheduleAll()
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        try { container.reminders.scheduleAll() } catch (syncError: Exception) {
+                            if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                            Log.e("KarHa", "Reminder rescheduling failed", syncError)
+                        }
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onSaveBackupMinute = { minute -> scope.launch {
+                    try {
+                        container.reminders.cancelBackup(weeklyBackupMinute)
+                        container.settings.setWeeklyBackupMinute(minute)
+                        container.reminders.scheduleAll()
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        try { container.reminders.scheduleAll() } catch (syncError: Exception) {
+                            if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                            Log.e("KarHa", "Reminder rescheduling failed", syncError)
+                        }
+                        snackbar.showSnackbar(context.getString(R.string.operation_failed))
+                    }
+                } },
+                onRequestNotifications = onRequestNotifications,
+                onOpenNotificationSettings = onOpenNotificationSettings,
+                onOpenBatterySettings = onOpenBatterySettings,
+                modifier = Modifier.padding(padding)
+            )
             Page.STATS -> Surface(Modifier.fillMaxSize().padding(padding)) {
                 Text(stringResource(R.string.empty_section), modifier = Modifier.padding(24.dp))
             }
@@ -421,10 +491,16 @@ fun TaskApp(container: AppContainer) {
         onSave = { task, tagIds ->
             scope.launch {
                 try {
+                    editingTask?.task?.let { container.reminders.cancelTask(it.id, it.dueMinuteOfDay) }
                     container.tasks.save(task, tagIds)
+                    container.reminders.scheduleAll()
                     showTaskEditor = false
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
+                    try { container.reminders.scheduleAll() } catch (syncError: Exception) {
+                        if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                        Log.e("KarHa", "Reminder rescheduling failed", syncError)
+                    }
                     snackbar.showSnackbar(context.getString(R.string.operation_failed))
                 }
             }
@@ -446,19 +522,35 @@ fun TaskApp(container: AppContainer) {
     if (showHabitEditor) HabitEditorDialog(
         item = editingHabit,
         tags = tags,
+        reminderMinutes = editingHabit?.reminderMinutes.orEmpty(),
         today = today,
         onDismiss = { showHabitEditor = false },
-        onSave = { habit, version, tagIds ->
+        onSave = { habit, version, tagIds, reminderMinutes ->
             scope.launch {
                 try {
-                    container.habits.save(habit, version, tagIds)
+                    editingHabit?.let { container.reminders.cancelHabit(habit.id, it.reminderMinutes) }
+                    container.habits.save(habit, version, tagIds, reminderMinutes)
+                    container.reminders.scheduleAll()
                     showHabitEditor = false
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
+                    try { container.reminders.scheduleAll() } catch (syncError: Exception) {
+                        if (syncError is kotlinx.coroutines.CancellationException) throw syncError
+                        Log.e("KarHa", "Reminder rescheduling failed", syncError)
+                    }
                     snackbar.showSnackbar(context.getString(R.string.operation_failed))
                 }
             }
         }
+    )
+    if (notificationPermissionDenied) AlertDialog(
+        onDismissRequest = onDismissPermissionPrompt,
+        title = { Text(stringResource(R.string.notification_permission_title)) },
+        text = { Text(stringResource(R.string.notification_permission_message)) },
+        confirmButton = {
+            TextButton(onClick = onOpenNotificationSettings) { Text(stringResource(R.string.open_notification_settings)) }
+        },
+        dismissButton = { TextButton(onClick = onDismissPermissionPrompt) { Text(stringResource(R.string.cancel)) } }
     )
 }
 
@@ -613,6 +705,7 @@ private fun TaskEditorDialog(task: TaskWithTags?, tags: List<TagEntity>, onDismi
     var timeText by remember(entity?.id) {
         mutableStateOf(entity?.dueMinuteOfDay?.let { PersianDigits.convert("%02d:%02d".format(java.util.Locale.ROOT, it / 60, it % 60)) }.orEmpty())
     }
+    var reminderEnabled by remember(entity?.id) { mutableStateOf(entity?.reminderEnabled == true) }
     var priority by remember(entity?.id) { mutableStateOf(runCatching { TaskPriority.valueOf(entity?.priority ?: "MEDIUM") }.getOrDefault(TaskPriority.MEDIUM)) }
     var selectedTagIds by remember(entity?.id, tags) { mutableStateOf(task?.tags?.map { it.id }?.toSet().orEmpty()) }
     val dueDate = remember(dateText) { if (dateText.isBlank()) null else PersianFormat.parseDate(dateText) }
@@ -640,6 +733,10 @@ private fun TaskEditorDialog(task: TaskWithTags?, tags: List<TagEntity>, onDismi
                         if (timeText.isNotBlank() && (dueMinute == null || dueDate == null)) Text(stringResource(R.string.due_time_invalid))
                     }
                 )
+                if (dueDate != null && dueMinute != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(reminderEnabled, { reminderEnabled = it })
+                    Text(stringResource(R.string.task_reminder))
+                }
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TaskPriority.entries.forEach { option ->
                         FilterChip(priority == option, { priority = option }, label = { Text(stringResource(option.resourceId())) }, modifier = Modifier.padding(end = 6.dp))
@@ -664,7 +761,7 @@ private fun TaskEditorDialog(task: TaskWithTags?, tags: List<TagEntity>, onDismi
                             description = description.trim().ifBlank { null },
                             dueEpochDay = dueDate?.toEpochDay(),
                             dueMinuteOfDay = dueMinute,
-                            reminderEnabled = entity?.reminderEnabled == true && dueDate != null && dueMinute != null,
+                            reminderEnabled = reminderEnabled && dueDate != null && dueMinute != null,
                             priority = priority.name
                         ),
                         selectedTagIds
@@ -726,6 +823,7 @@ private fun Page.titleRes() = when (this) {
     Page.HABITS -> R.string.habits
     Page.STATS -> R.string.stats
     Page.TAGS -> R.string.tags
+    Page.SETTINGS -> R.string.settings
 }
 
 private fun Page.icon(): ImageVector = when (this) {
@@ -734,6 +832,7 @@ private fun Page.icon(): ImageVector = when (this) {
     Page.HABITS -> Icons.Default.Favorite
     Page.STATS -> Icons.Default.Star
     Page.TAGS -> Icons.Default.Settings
+    Page.SETTINGS -> Icons.Default.Settings
 }
 
 private fun TaskSection.titleRes() = when (this) {

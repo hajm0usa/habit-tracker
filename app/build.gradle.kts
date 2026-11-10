@@ -52,6 +52,7 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     implementation(libs.work.runtime.ktx)
+    implementation(libs.datastore.preferences)
     ksp(libs.room.compiler)
     testImplementation(libs.junit)
     debugImplementation(libs.compose.ui.tooling)

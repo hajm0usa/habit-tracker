@@ -6,6 +6,7 @@ import ir.hajmousa.habits.data.db.AppDatabase
 import ir.hajmousa.habits.data.db.HabitEntity
 import ir.hajmousa.habits.data.db.HabitLogEntity
 import ir.hajmousa.habits.data.db.HabitScheduleVersionEntity
+import ir.hajmousa.habits.data.db.HabitReminderEntity
 import ir.hajmousa.habits.data.db.HabitTagCrossRef
 import ir.hajmousa.habits.data.db.HabitWithTags
 import ir.hajmousa.habits.domain.habit.CompletionRules
@@ -21,8 +22,14 @@ class HabitRepository(private val database: AppDatabase, private val dayClock: D
     fun observeAll(): Flow<List<HabitWithTags>> = database.habitDao().observeAllWithTags()
     fun observeVersions(): Flow<List<HabitScheduleVersionEntity>> = database.habitDao().observeVersions()
     fun observeLogs(): Flow<List<HabitLogEntity>> = database.habitDao().observeLogs()
+    fun observeReminders(): Flow<List<HabitReminderEntity>> = database.habitDao().observeReminders()
 
-    suspend fun save(habit: HabitEntity, version: HabitScheduleVersionEntity, tagIds: Set<Long>): Long {
+    suspend fun save(
+        habit: HabitEntity,
+        version: HabitScheduleVersionEntity,
+        tagIds: Set<Long>,
+        reminderMinutes: Set<Int> = emptySet()
+    ): Long {
         require(habit.name.isNotBlank())
         require(version.targetValue > 0 && version.step > 0)
         when (version.scheduleType) {
@@ -32,6 +39,7 @@ class HabitRepository(private val database: AppDatabase, private val dayClock: D
             else -> throw IllegalArgumentException("Unknown schedule type")
         }
         if (habit.type == HabitType.BOOLEAN.name) require(version.targetValue == 1 && version.step == 1)
+        require(reminderMinutes.all { it in 0..1439 })
         val today = dayClock.today().toEpochDay()
         return database.withTransaction {
             val id = if (habit.id == 0L) database.habitDao().insert(
@@ -42,6 +50,10 @@ class HabitRepository(private val database: AppDatabase, private val dayClock: D
             }
             database.habitDao().clearTags(id)
             if (tagIds.isNotEmpty()) database.habitDao().putTags(tagIds.map { HabitTagCrossRef(id, it) })
+            database.habitDao().deleteReminders(id)
+            if (reminderMinutes.isNotEmpty()) {
+                database.habitDao().insertReminders(reminderMinutes.map { HabitReminderEntity(habitId = id, minuteOfDay = it) })
+            }
             database.habitDao().deleteVersionOn(id, today)
             database.habitDao().insertVersion(version.copy(id = 0, habitId = id, effectiveFromEpochDay = today))
             id
@@ -70,6 +82,12 @@ class HabitRepository(private val database: AppDatabase, private val dayClock: D
         }
         val previous = database.habitDao().findLog(habitId, epochDay)
         database.habitDao().putLog(HabitLogEntity(previous?.id ?: 0, habitId, epochDay, next, false))
+    }
+
+    suspend fun completeFromReminder(habitId: Long, epochDay: Long) {
+        val habit = database.habitDao().find(habitId) ?: return
+        val version = ScheduleResolver.versionOn(database.habitDao().versions(habitId).map { it.toModel() }, epochDay) ?: return
+        setValue(habitId, epochDay, if (habit.type == HabitType.BOOLEAN.name) 1 else version.targetValue)
     }
 
     suspend fun setSkipped(habitId: Long, epochDay: Long, skipped: Boolean) = database.withTransaction {

@@ -6,6 +6,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import ir.hajmousa.habits.work.TaskCleanupWorker
+import ir.hajmousa.habits.notifications.NotificationHelper
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ class HabitsApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        NotificationHelper(this).createChannels()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 container.tasks.cleanupExpired()
@@ -33,5 +35,13 @@ class HabitsApp : Application() {
             ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<TaskCleanupWorker>(24, TimeUnit.HOURS).build()
         )
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                container.reminders.scheduleAll()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.e("KarHa", "Reminder scheduling failed", error)
+            }
+        }
     }
 }

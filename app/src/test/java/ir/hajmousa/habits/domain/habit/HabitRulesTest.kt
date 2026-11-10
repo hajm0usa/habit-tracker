@@ -77,4 +77,12 @@ class HabitRulesTest {
         val logs = scheduled.dropLast(1).associateWith { HabitLogRecord(it, 1, false) }
         assertTrue(StreakCalculator.best(created, today, listOf(weekdaySchedule), logs) >= 1)
     }
+
+    @Test fun nextScheduledDayJumpsFixedIntervalsAndScheduleVersions() {
+        val anchor = day("2024-03-23")
+        val everyThree = schedule(anchor, ScheduleType.EVERY_N, interval = 3, anchor = anchor)
+        val dailyChange = schedule(anchor + 5)
+        assertEquals(anchor + 3, ScheduleResolver.nextScheduledDay(anchor + 1, listOf(everyThree, dailyChange)))
+        assertEquals(anchor + 5, ScheduleResolver.nextScheduledDay(anchor + 5, listOf(everyThree, dailyChange)))
+    }
 }

@@ -17,6 +17,9 @@ interface TaskDao {
     @Query("SELECT * FROM tasks WHERE id = :id")
     suspend fun find(id: Long): TaskEntity?
 
+    @Query("SELECT * FROM tasks")
+    suspend fun allTasks(): List<TaskEntity>
+
     @Query("SELECT tagId FROM task_tag_cross_ref WHERE taskId = :taskId")
     suspend fun tagIds(taskId: Long): List<Long>
 

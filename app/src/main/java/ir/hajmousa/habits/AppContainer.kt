@@ -7,6 +7,8 @@ import ir.hajmousa.habits.data.db.AppDatabase
 import ir.hajmousa.habits.data.repo.HabitRepository
 import ir.hajmousa.habits.data.repo.TagRepository
 import ir.hajmousa.habits.data.repo.TaskRepository
+import ir.hajmousa.habits.data.settings.SettingsStore
+import ir.hajmousa.habits.notifications.ReminderScheduler
 import java.time.Clock
 
 class AppContainer(context: Context) {
@@ -19,4 +21,6 @@ class AppContainer(context: Context) {
     val tasks = TaskRepository(database, dayClock, Clock.systemDefaultZone())
     val habits = HabitRepository(database, dayClock)
     val tags = TagRepository(database)
+    val settings = SettingsStore(context)
+    val reminders = ReminderScheduler(context.applicationContext, database, dayClock, settings)
 }

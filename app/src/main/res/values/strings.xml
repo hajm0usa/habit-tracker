@@ -17,6 +17,7 @@
     <string name="due_date_invalid">تاریخ شمسی معتبر نیست</string>
     <string name="due_time">ساعت سررسید (مثلاً ۰۹:۳۰)</string>
     <string name="due_time_invalid">ساعت معتبر نیست</string>
+    <string name="task_reminder">یادآوری در ساعت سررسید</string>
     <string name="priority_low">کم</string>
     <string name="priority_medium">متوسط</string>
     <string name="priority_high">زیاد</string>
@@ -117,6 +118,24 @@
     <string name="empty_habits">هنوز عادتی نساخته‌ای</string>
     <string name="empty_filtered_habits">عادتی با همهٔ برچسب‌های انتخاب‌شده پیدا نشد</string>
     <string name="not_scheduled_today">امروز برنامه ندارد</string>
+    <string name="habit_reminder_times">زمان‌های یادآوری (مثلاً ۰۹:۰۰، ۱۸:۰۰)</string>
     <string name="show_archived">نمایش بایگانی</string>
     <string name="hide_archived">پنهان کردن بایگانی</string>
+    <string name="habit_notification_title">یادآوری عادت</string>
+    <string name="task_notification_title">یادآوری کار</string>
+    <string name="backup_notification_title">پشتیبان بگیر</string>
+    <string name="action_done">انجام شد</string>
+    <string name="snooze_10_minutes">۱۰ دقیقه بعد</string>
+    <string name="habit_notification_text">زمان انجام %1$s رسیده است</string>
+    <string name="task_notification_text">زمان انجام %1$s رسیده است</string>
+    <string name="settings">تنظیمات</string>
+    <string name="notification_permission_title">اجازهٔ اعلان‌ها</string>
+    <string name="notification_permission_message">برای یادآوری کارها و عادت‌ها، اجازهٔ نمایش اعلان لازم است.</string>
+    <string name="enable_notifications">درخواست اجازه</string>
+    <string name="open_notification_settings">تنظیمات اعلان‌ها</string>
+    <string name="battery_guide">اگر یادآورها دیر می‌رسند، محدودیت باتری این برنامه را بردار.</string>
+    <string name="battery_settings">تنظیمات بهینه‌سازی باتری</string>
+    <string name="weekly_backup_reminder">یادآوری هفتگی پشتیبان‌گیری</string>
+    <string name="backup_reminder_time">ساعت یادآوری</string>
+    <string name="save_settings">ذخیرهٔ تنظیمات</string>
 </resources>

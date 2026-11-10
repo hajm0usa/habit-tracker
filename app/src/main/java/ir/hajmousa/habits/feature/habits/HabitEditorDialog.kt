@@ -36,9 +36,10 @@ import java.time.LocalDate
 fun HabitEditorDialog(
     item: HabitProgressItem?,
     tags: List<TagEntity>,
+    reminderMinutes: List<Int>,
     today: LocalDate,
     onDismiss: () -> Unit,
-    onSave: (HabitEntity, HabitScheduleVersionEntity, Set<Long>) -> Unit
+    onSave: (HabitEntity, HabitScheduleVersionEntity, Set<Long>, Set<Int>) -> Unit
 ) {
     val habit = item?.row?.habit
     val version = item?.version
@@ -59,18 +60,25 @@ fun HabitEditorDialog(
     }
     var targetText by remember(habit?.id) { mutableStateOf(PersianDigits.convert((version?.targetValue ?: 1).toString())) }
     var stepText by remember(habit?.id) { mutableStateOf(PersianDigits.convert((version?.step ?: 1).toString())) }
+    var reminderText by remember(habit?.id) {
+        mutableStateOf(reminderMinutes.joinToString("، ") { minute ->
+            PersianDigits.convert("%02d:%02d".format(java.util.Locale.ROOT, minute / 60, minute % 60))
+        })
+    }
     var selectedTagIds by remember(habit?.id, tags) { mutableStateOf(item?.row?.tags?.map { it.id }?.toSet().orEmpty()) }
 
     val anchorDate = remember(anchorText) { PersianFormat.parseDate(anchorText) }
     val interval = PersianDigits.toAscii(intervalText).toIntOrNull()
     val target = if (type == HabitType.BOOLEAN) 1 else PersianDigits.toAscii(targetText).toIntOrNull()
     val step = if (type == HabitType.BOOLEAN) 1 else PersianDigits.toAscii(stepText).toIntOrNull()
+    val parsedReminderTimes = reminderText.split(Regex("[,،;\\s]+")).filter(String::isNotBlank).map(PersianFormat::parseTime)
+    val parsedRemindersValid = parsedReminderTimes.all { it != null }
     val validSchedule = when (scheduleType) {
         ScheduleType.DAILY -> true
         ScheduleType.WEEKDAYS -> weekdaysMask != 0
         ScheduleType.EVERY_N -> interval != null && interval > 0 && anchorDate != null
     }
-    val valid = name.isNotBlank() && validSchedule && (target ?: 0) > 0 && (step ?: 0) > 0
+    val valid = name.isNotBlank() && validSchedule && (target ?: 0) > 0 && (step ?: 0) > 0 && parsedRemindersValid
     val weekdayIds = listOf(
         R.string.weekday_saturday, R.string.weekday_sunday, R.string.weekday_monday,
         R.string.weekday_tuesday, R.string.weekday_wednesday, R.string.weekday_thursday, R.string.weekday_friday
@@ -113,6 +121,13 @@ fun HabitEditorDialog(
                     OutlinedTextField(stepText, { stepText = PersianDigits.convert(PersianDigits.toAscii(it)) }, label = { Text(stringResource(R.string.habit_step)) }, singleLine = true)
                     OutlinedTextField(unit, { unit = it }, label = { Text(stringResource(R.string.habit_unit)) }, singleLine = true)
                 }
+                OutlinedTextField(
+                    reminderText,
+                    { reminderText = PersianDigits.convert(PersianDigits.toAscii(it)) },
+                    label = { Text(stringResource(R.string.habit_reminder_times)) },
+                    isError = !parsedRemindersValid,
+                    singleLine = true
+                )
                 if (tags.isNotEmpty()) Text(stringResource(R.string.tags), style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     tags.forEach { tag ->
@@ -143,7 +158,7 @@ fun HabitEditorDialog(
                     targetValue = target ?: 1,
                     step = step ?: 1
                 )
-                onSave(habitEntity, scheduleEntity, selectedTagIds)
+                onSave(habitEntity, scheduleEntity, selectedTagIds, parsedReminderTimes.filterNotNull().toSet())
             }) { Text(stringResource(R.string.save)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
