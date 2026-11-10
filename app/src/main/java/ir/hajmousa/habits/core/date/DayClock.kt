@@ -24,10 +24,9 @@ class DayClock(
         dayStartHour = hour
     }
 
-    fun today(): LocalDate = LocalDate.ofInstant(
-        Instant.ofEpochMilli(clock.millis() - dayStartHour * 60L * 60 * 1000),
-        zoneId()
-    )
+    fun today(): LocalDate = Instant.ofEpochMilli(clock.millis() - dayStartHour * 60L * 60 * 1000)
+        .atZone(zoneId())
+        .toLocalDate()
 
     companion object {
         fun system(zone: ZoneId? = null, dayStartHour: Int = 0) =
