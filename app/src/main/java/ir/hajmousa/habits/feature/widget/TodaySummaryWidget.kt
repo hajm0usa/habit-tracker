@@ -17,9 +17,9 @@ import androidx.glance.layout.padding
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.text.FontWeight
-import androidx.glance.unit.dp
-import androidx.glance.unit.sp
 import androidx.glance.unit.ColorProvider
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ir.hajmousa.habits.HabitsApp
 import ir.hajmousa.habits.MainActivity
 import ir.hajmousa.habits.R
