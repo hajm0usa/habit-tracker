@@ -11,7 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.LocalTextStyle
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -28,8 +29,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ir.hajmousa.habits.feature.tasks.TaskApp
 import kotlinx.coroutines.flow.first
 
@@ -108,9 +110,36 @@ private fun KarHaTheme(content: @Composable () -> Unit) {
         Font(R.font.vazirmatn_regular, FontWeight.Normal),
         Font(R.font.vazirmatn_bold, FontWeight.Bold)
     )
+    val defaults = Typography()
+    val typography = defaults.copy(
+        displayLarge = defaults.displayLarge.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        displayMedium = defaults.displayMedium.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        displaySmall = defaults.displaySmall.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        headlineLarge = defaults.headlineLarge.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        headlineMedium = defaults.headlineMedium.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        headlineSmall = defaults.headlineSmall.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        titleLarge = defaults.titleLarge.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        titleMedium = defaults.titleMedium.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        titleSmall = defaults.titleSmall.copy(fontFamily = fontFamily, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        bodyLarge = defaults.bodyLarge.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        bodyMedium = defaults.bodyMedium.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        bodySmall = defaults.bodySmall.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        labelLarge = defaults.labelLarge.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        labelMedium = defaults.labelMedium.copy(fontFamily = fontFamily, letterSpacing = 0.sp),
+        labelSmall = defaults.labelSmall.copy(fontFamily = fontFamily, letterSpacing = 0.sp)
+    )
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        MaterialTheme(colorScheme = colors, typography = Typography(), content = {
-            CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.merge(TextStyle(fontFamily = fontFamily)), content = content)
-        })
+        MaterialTheme(
+            colorScheme = colors,
+            typography = typography,
+            shapes = Shapes(
+                extraSmall = RoundedCornerShape(8.dp),
+                small = RoundedCornerShape(12.dp),
+                medium = RoundedCornerShape(20.dp),
+                large = RoundedCornerShape(24.dp),
+                extraLarge = RoundedCornerShape(32.dp)
+            ),
+            content = content
+        )
     }
 }
